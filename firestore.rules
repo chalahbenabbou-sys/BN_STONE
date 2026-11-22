@@ -1,0 +1,188 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Primitive Helpers ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrapAdmin() {
+      return isEmailVerified() && request.auth.token.email == 'tawamant23@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrapAdmin() || (
+        isEmailVerified() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // --- Validation Blueprints (Synchronized with firebase-blueprint.json) ---
+    function isValidCategory(cat) {
+      return cat in ['helmets', 'gloves', 'jackets', 'accessories'];
+    }
+
+    function isValidProductFields(data) {
+      return data.keys().hasAll([
+        'name', 'price', 'description', 'category', 'imageUrl',
+        'published', 'createdBy', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'name', 'price', 'description', 'category', 'imageUrl',
+        'published', 'createdBy', 'createdAt', 'updatedAt'
+      ]) &&
+      data.name is string && data.name.size() >= 2 && data.name.size() <= 140 &&
+      (data.price is int || data.price is float) && data.price >= 0 && data.price <= 10000000 &&
+      data.description is string && data.description.size() >= 5 && data.description.size() <= 2500 &&
+      data.category is string && isValidCategory(data.category) &&
+      data.imageUrl is string && data.imageUrl.size() >= 5 && data.imageUrl.size() <= 2048 &&
+      (data.imageUrl.matches('^https://.*') || data.imageUrl.matches('^/.*')) &&
+      data.published is bool &&
+      data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidProductCreate(data) {
+      return isValidProductFields(data) &&
+        data.createdBy == request.auth.uid &&
+        data.createdAt == request.time &&
+        data.updatedAt == request.time;
+    }
+
+    function isValidProductUpdate(data) {
+      return isValidProductFields(data) &&
+        data.updatedAt == request.time;
+    }
+
+    function isValidStoreSettings(data) {
+      return data.keys().hasAll(['whatsappPhone', 'currency', 'storeName', 'updatedAt']) &&
+        data.keys().hasOnly(['whatsappPhone', 'currency', 'storeName', 'updatedAt']) &&
+        data.whatsappPhone is string &&
+        data.whatsappPhone.size() <= 24 &&
+        data.whatsappPhone.matches('^[0-9+\\-\\s]*$') &&
+        data.currency is string &&
+        data.currency.size() >= 1 && data.currency.size() <= 16 &&
+        data.storeName is string &&
+        data.storeName.size() >= 2 && data.storeName.size() <= 64 &&
+        data.updatedAt is timestamp &&
+        data.updatedAt == request.time;
+    }
+
+    function isValidAdminDoc(data) {
+      return data.keys().hasAll(['email', 'role', 'createdAt']) &&
+        data.keys().hasOnly(['email', 'role', 'createdAt']) &&
+        data.email is string && data.email.size() >= 5 && data.email.size() <= 254 &&
+        data.role == 'admin' &&
+        data.createdAt is timestamp &&
+        data.createdAt == request.time;
+    }
+
+    // --- Collection: /products/{productId} ---
+    match /products/{productId} {
+      // Public visitors can read published products; verified admins can read all products.
+      allow get: if isValidId(productId) && (existing().published == true || isAdmin());
+
+      // Query Enforcer (no get()/exists() in list to prevent O(n) read amplification):
+      // Public list queries MUST filter by published == true; bootstrap admin may list all.
+      allow list: if existing().published == true || isBootstrapAdmin();
+
+      // Admin-only create with strict blueprint + server timestamp validation.
+      allow create: if isSignedIn() &&
+        isEmailVerified() &&
+        isValidId(productId) &&
+        isValidProductCreate(incoming()) &&
+        isAdmin();
+
+      // Admin-only update with immutable createdBy/createdAt and strict affectedKeys allowlist.
+      allow update: if isSignedIn() &&
+        isEmailVerified() &&
+        isValidId(productId) &&
+        isValidProductUpdate(incoming()) &&
+        isAdmin() &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().createdAt == existing().createdAt &&
+        (
+          incoming().diff(existing()).affectedKeys().hasOnly(['published', 'updatedAt']) ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'price', 'description', 'category', 'imageUrl', 'published', 'updatedAt'])
+        );
+
+      // Admin-only delete.
+      allow delete: if isSignedIn() &&
+        isEmailVerified() &&
+        isValidId(productId) &&
+        isAdmin();
+    }
+
+    // --- Collection: /settings/{settingId} ---
+    match /settings/{settingId} {
+      // Public storefront settings document (/settings/store) is non-PII and readable by everyone.
+      allow get: if isValidId(settingId) && settingId == 'store';
+      allow list: if false;
+
+      allow create: if isSignedIn() &&
+        isEmailVerified() &&
+        isValidId(settingId) &&
+        settingId == 'store' &&
+        isValidStoreSettings(incoming()) &&
+        isAdmin();
+
+      allow update: if isSignedIn() &&
+        isEmailVerified() &&
+        isValidId(settingId) &&
+        settingId == 'store' &&
+        isValidStoreSettings(incoming()) &&
+        isAdmin() &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['whatsappPhone', 'currency', 'storeName', 'updatedAt']);
+
+      allow delete: if false;
+    }
+
+    // --- Collection: /admins/{adminUid} ---
+    match /admins/{adminUid} {
+      // Users may only check their own admin record; bootstrap owner can inspect any.
+      allow get: if isSignedIn() &&
+        isEmailVerified() &&
+        isValidId(adminUid) &&
+        (request.auth.uid == adminUid || isBootstrapAdmin());
+
+      allow list: if isBootstrapAdmin();
+
+      allow create: if isSignedIn() &&
+        isEmailVerified() &&
+        isValidId(adminUid) &&
+        isValidAdminDoc(incoming()) &&
+        isBootstrapAdmin();
+
+      allow update: if false;
+
+      allow delete: if isSignedIn() &&
+        isEmailVerified() &&
+        isValidId(adminUid) &&
+        isBootstrapAdmin();
+    }
+  }
+}

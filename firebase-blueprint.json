@@ -1,0 +1,140 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Motorcycle accessory product listed in the BN_STONE catalog.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Arabic product title displayed to shoppers.",
+          "minLength": 2,
+          "maxLength": 140
+        },
+        "price": {
+          "type": "number",
+          "description": "Product price in store currency (non-negative)."
+        },
+        "description": {
+          "type": "string",
+          "description": "Detailed Arabic product description and specifications.",
+          "minLength": 5,
+          "maxLength": 2500
+        },
+        "category": {
+          "type": "string",
+          "description": "Product category identifier.",
+          "enum": ["helmets", "gloves", "jackets", "accessories"]
+        },
+        "imageUrl": {
+          "type": "string",
+          "description": "Public HTTPS or root-relative image URL for the product.",
+          "minLength": 5,
+          "maxLength": 2048
+        },
+        "published": {
+          "type": "boolean",
+          "description": "Controls whether the product is visible on the public storefront."
+        },
+        "createdBy": {
+          "type": "string",
+          "description": "UID of the authenticated admin who created the product.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the product was created (immutable)."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the product was last updated."
+        }
+      },
+      "required": [
+        "name",
+        "price",
+        "description",
+        "category",
+        "imageUrl",
+        "published",
+        "createdBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "StoreSettings": {
+      "title": "StoreSettings",
+      "description": "Publicly readable storefront configuration managed exclusively by the owner.",
+      "type": "object",
+      "properties": {
+        "whatsappPhone": {
+          "type": "string",
+          "description": "Optional international WhatsApp contact number (empty until configured by owner).",
+          "minLength": 0,
+          "maxLength": 24,
+          "pattern": "^[0-9+\\-\\s]*$"
+        },
+        "currency": {
+          "type": "string",
+          "description": "Currency label shown next to product prices.",
+          "minLength": 1,
+          "maxLength": 16
+        },
+        "storeName": {
+          "type": "string",
+          "description": "Public storefront brand name.",
+          "minLength": 2,
+          "maxLength": 64
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when settings were last updated."
+        }
+      },
+      "required": ["whatsappPhone", "currency", "storeName", "updatedAt"]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Authorized admin record granting access to manage BN_STONE catalog.",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Verified email address of the authorized admin.",
+          "minLength": 5,
+          "maxLength": 254
+        },
+        "role": {
+          "type": "string",
+          "description": "Fixed admin role.",
+          "enum": ["admin"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when admin access was granted."
+        }
+      },
+      "required": ["email", "role", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Motorcycle accessory products; published items are readable by everyone, while all writes and hidden items are restricted to verified admins."
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/StoreSettings" },
+      "description": "Storefront configuration document at /settings/store; publicly readable, writable only by verified admins."
+    },
+    "/admins/{adminUid}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "Allowlist of authorized admin UIDs; readable only by the matching user or bootstrap owner, writable only by bootstrap owner."
+    }
+  }
+}
